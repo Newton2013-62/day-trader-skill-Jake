@@ -98,7 +98,7 @@ class TheReel(unittest.TestCase):
         self.assertEqual(r["value_usd"], 2913.44)
         self.assertEqual(res["cash_after"], 2086.56)
         self.assertEqual(res["date"], TODAY)
-        self.assertIs(res["paper"], True)
+        self.assertIs(res["paper"], False)  # the example config trades live on Schwab
 
     def test_nine_shares_is_blocked_by_the_max_loss_only(self):
         res = check.check([tsla(qty="9")], cfg(), now=at(NOW))

@@ -55,8 +55,23 @@ DOUBT_WORDS = {"no", "not", "dont", "don't", "wait", "cancel", "stop", "but", "m
                "hold", "unless", "if"}
 
 
+BROKER_NAMES = {"alpaca": "Alpaca", "ibkr": "Interactive Brokers", "schwab": "Charles Schwab"}
+
+
 class TicketError(Exception):
     pass
+
+
+def schwab_body(order):
+    """The Schwab order JSON for this ticket (schwab.py does the conversion), or an error note."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import schwab  # same folder; imported here so ticket.py never needs it for other brokers
+    try:
+        return schwab.to_schwab(order)
+    except schwab.SchwabError as e:
+        return {"error": "cannot send this order to Schwab: %s" % e}
 
 
 # ---------------------------------------------------------------- time (New York, no tz files)
@@ -352,9 +367,9 @@ def kind_of(order, rv):
 def render(order, idx, total, cfg, risk, state, today):
     ready, label, rv = status_of(order, risk, state, today)
     broker = str(cfg.get("broker", "alpaca")).lower()
-    paper = cfg.get("paper", True)
+    paper = cfg.get("paper", True) and broker != "schwab"   # Schwab has no paper trading
     acct = "PAPER account" if paper else "LIVE ACCOUNT, REAL MONEY"
-    lines = ["ORDER %d of %d, %s, %s" % (idx, total, acct, "Interactive Brokers" if broker == "ibkr" else "Alpaca")]
+    lines = ["ORDER %d of %d, %s, %s" % (idx, total, acct, BROKER_NAMES.get(broker, "Alpaca"))]
     for part in plain_parts(order):
         lines.append("  " + part)
     if order.get("why"):
@@ -365,6 +380,14 @@ def render(order, idx, total, cfg, risk, state, today):
     if broker == "ibkr":
         lines.append("  Claude drafts this with the Interactive Brokers connector. IBKR sends it to your")
         lines.append("  IBKR account, and it only goes to the market after you approve it there.")
+    elif broker == "schwab":
+        lines.append("  After your yes, Claude calls schwab_place_order (or schwab.py place --index %d)," % idx)
+        lines.append("  which sends exactly this to Schwab:")
+        for l in json.dumps(schwab_body(order), indent=2).splitlines():
+            lines.append("    " + l)
+        if is_bracket(order):
+            lines.append("  Schwab places the entry; once it fills, the stop-loss and the take-profit go in")
+            lines.append("  as two orders that cancel each other: when one fills, the other is canceled.")
     else:
         lines.append("  Claude will call place_stock_order with exactly:")
         for l in json.dumps(tool_input(order), indent=2).splitlines():
@@ -382,11 +405,19 @@ def render(order, idx, total, cfg, risk, state, today):
 def ticket_json(order, idx, cfg, risk, state, today):
     ready, label, rv = status_of(order, risk, state, today)
     loss, stop = max_loss(order)
-    return {"index": idx, "ready": ready, "status": label, "plain": plain(order),
-            "fingerprint": fingerprint(order), "paper": bool(cfg.get("paper", True)),
-            "broker": cfg.get("broker", "alpaca"), "tool": "place_stock_order",
-            "tool_input": tool_input(order), "why": order.get("why", ""),
-            "bracket": is_bracket(order), "max_loss": loss, "stop": stop}
+    broker = str(cfg.get("broker", "alpaca")).lower()
+    if broker == "schwab":
+        tool, tinput = "schwab_place_order", {"index": idx}
+    else:
+        tool, tinput = "place_stock_order", tool_input(order)
+    out = {"index": idx, "ready": ready, "status": label, "plain": plain(order),
+           "fingerprint": fingerprint(order), "paper": bool(cfg.get("paper", True)) and broker != "schwab",
+           "broker": cfg.get("broker", "alpaca"), "tool": tool,
+           "tool_input": tinput, "why": order.get("why", ""),
+           "bracket": is_bracket(order), "max_loss": loss, "stop": stop}
+    if broker == "schwab":
+        out["schwab_order"] = schwab_body(order)
+    return out
 
 
 # ---------------------------------------------------------------- fills -> portfolio
@@ -516,8 +547,12 @@ def cmd_approve(a):
     state.setdefault("orders", []).append(rec)
     write_json(a.state, state)
     print("Recorded your yes for order %d: %s." % (a.index, plain(order)))
-    if str(cfg.get("broker", "alpaca")).lower() == "ibkr":
+    broker = str(cfg.get("broker", "alpaca")).lower()
+    if broker == "ibkr":
         print("Now draft it with the Interactive Brokers connector; approve it in your IBKR account.")
+    elif broker == "schwab":
+        print("Now call schwab_place_order with {\"index\": %d} (or: schwab.py place --index %d)." % (a.index, a.index))
+        print("This is a LIVE Schwab order. Claude's card shows Allow once / Deny; schwab.py records the result.")
     else:
         print("Now call place_stock_order with exactly:")
         print(json.dumps(tool_input(order), indent=2))
@@ -622,9 +657,14 @@ def cmd_flatten(a):
     print("  1. trader-risk: check.py. A sell that only closes what you hold is never blocked by the daily")
     print("     limits or the entry window.")
     print("  2. ticket.py show, then the user's yes for this one order.")
-    print("  3. If the bracket's stop-loss and take-profit are still open, Alpaca holds these shares for them")
-    print("     and rejects a new sell. Cancel them first: get_orders (status open, nested true), then")
-    print("     cancel_order_by_id for each open leg (Needs approval). Then place_stock_order with the ticket.")
+    if str(cfg.get("broker", "alpaca")).lower() == "schwab":
+        print("  3. If the bracket's stop-loss and take-profit are still open on Schwab, cancel them first:")
+        print("     schwab_get_orders (or schwab.py orders), then schwab_cancel_order for each open leg")
+        print("     (Needs approval). Then schwab_place_order with this ticket.")
+    else:
+        print("  3. If the bracket's stop-loss and take-profit are still open, Alpaca holds these shares for them")
+        print("     and rejects a new sell. Cancel them first: get_orders (status open, nested true), then")
+        print("     cancel_order_by_id for each open leg (Needs approval). Then place_stock_order with the ticket.")
     return 0
 
 

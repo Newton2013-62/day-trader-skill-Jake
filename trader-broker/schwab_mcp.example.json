@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "schwab": {
+      "command": "python3",
+      "args": ["/full/path/to/day-trader-skill/trader-broker/schwab_mcp.py"],
+      "env": {
+        "TRADER_DIR": "/full/path/to/your/trading/project"
+      }
+    }
+  }
+}

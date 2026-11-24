@@ -1,19 +1,21 @@
 ---
 name: trader-broker
 description: >-
-  Order Executor. Sends approved orders to your broker, paper trading by
-  default, never without your yes. Shows each order as a plain ticket (a
+  Order Executor. Sends approved orders to your broker, never without your
+  yes. This fork is set up for Charles Schwab's Trader API (LIVE, real money:
+  Schwab has no paper trading) through a local schwab-trader connector, with
+  Alpaca (paper) and Interactive Brokers still supported. Shows each order as a plain ticket (a
   bracket shows its stop-loss, take-profit and the max loss at the stop)
   plus the exact JSON for Alpaca's place_stock_order, records your yes word
   for word, then Claude's own Allow once / Deny card asks again. Builds the
   sell ticket that closes a day trade by your flat-by time, records fills,
   and logs each trade's max loss so trader-risk can hold the daily limit.
-  Covers setting up Alpaca's official MCP server in Claude Desktop (paper by
-  default, keys in env vars, never in chat), the Interactive Brokers
-  connector, and setting order tools to "Needs approval". Use when the user
-  says "place the order", "buy it", "execute", "send it to my broker",
-  "close my position", "flatten", "get me out", "connect Alpaca", "set up
-  paper trading", or after /trader-risk passes.
+  Covers signing in to Schwab and adding the schwab-trader connector, Alpaca's
+  official MCP server (paper), the Interactive Brokers connector, and setting
+  order tools to "Needs approval". Keys stay in env vars or local files, never
+  in chat. Use when the user says "place the order", "buy it", "execute",
+  "send it to my broker", "close my position", "flatten", "get me out",
+  "connect Schwab", "connect Alpaca", or after /trader-risk passes.
 argument-hint: "[order number]"
 ---
 
@@ -41,6 +43,16 @@ python3 "${CLAUDE_SKILL_DIR}/ticket.py" flatten --symbol TSLA --qty 8
 python3 "${CLAUDE_SKILL_DIR}/ticket.py" log
 ```
 
+```bash
+python3 "${CLAUDE_SKILL_DIR}/schwab.py" status                   # Schwab sign-in and account
+python3 "${CLAUDE_SKILL_DIR}/schwab.py" account                  # cash, buying power, positions (read only)
+python3 "${CLAUDE_SKILL_DIR}/schwab.py" preview --index 1        # the Schwab order JSON; sends nothing
+python3 "${CLAUDE_SKILL_DIR}/schwab.py" place --index 1          # LIVE: only after risk PASS + recorded yes
+python3 "${CLAUDE_SKILL_DIR}/schwab.py" orders                   # today's Schwab orders and fills
+python3 "${CLAUDE_SKILL_DIR}/schwab.py" position TSLA            # shares held, for flatten --qty
+python3 "${CLAUDE_SKILL_DIR}/schwab.py" cancel ORDER_ID          # cancel one open order
+```
+
 `ticket.py` never talks to a broker. It renders tickets, checks that a reply
 is a real yes for that order, builds the flatten ticket, and keeps the log in
 `trader/state/broker.json`. `--now "2026-10-19 10:15"` pins the clock (New York time).
@@ -54,6 +66,48 @@ is a real yes for that order, builds the flatten ticket, and keeps the log in
 | `trader/state/broker.json` | every yes, no, placed, failed and filled, with each entry's max loss |
 | `trader/portfolio.json` | cash and shares, updated by `fill` and by `result --filled-qty` |
 | `trader/plan.json` | the flat-by time for `flatten` |
+
+## Setup S: Charles Schwab (this fork's default, LIVE)
+
+`trader/config.json` says `"broker": "schwab"` and `"paper": false`. **Schwab's
+Trader API has no paper account: every order is real money.** The three gates
+are what stand between a ticket and the market, so never weaken them.
+
+1. The user has an app at developer.schwab.com (Trader API, Individual) in
+   "Ready For Use" status, with a callback URL (usually `https://127.0.0.1`).
+2. The user puts the app key and secret on their own computer, never in the
+   chat: environment variables `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET` (and
+   `SCHWAB_CALLBACK_URL` if it is not `https://127.0.0.1`), or a file
+   `~/.schwab-trader/app.json` with `"app_key"`, `"app_secret"`, `"callback_url"`.
+   If they paste a key or secret into the chat anyway, tell them to delete the
+   message and reset the secret in the Schwab developer portal.
+3. The user signs in **in their own terminal**: `python3 trader-broker/schwab.py auth`.
+   It prints a Schwab link; they sign in, approve the accounts, and paste the
+   address Schwab redirects to (it holds a one-time code that expires in about
+   30 seconds). The sign-in is saved to `~/.schwab-trader/token.json`, readable
+   by them only. Never run `auth` for them, never read that file into the chat.
+   It lasts **7 days**; after that `schwab.py` says to run `auth` again.
+4. More than one Schwab account: set `"schwab_account"` in `trader/config.json`
+   to the account number or its last 4 digits (or `SCHWAB_ACCOUNT_NUMBER`).
+5. Add the connector. Claude Code, from the project folder:
+   `claude mcp add schwab -- python3 /path/to/trader-broker/schwab_mcp.py`
+   (or the block in `schwab_mcp.example.json` in `.mcp.json`). Claude Desktop:
+   the same block in `claude_desktop_config.json`, with `TRADER_DIR` set to the
+   project folder. Restart.
+6. **Permissions.** `schwab_place_order` and `schwab_cancel_order`: Needs
+   approval (Desktop) or, in Claude Code, `.claude/settings.json`:
+   `"permissions": {"ask": ["mcp__schwab__schwab_place_order", "mcp__schwab__schwab_cancel_order",
+   "Bash(python3 trader-broker/schwab.py place:*)", "Bash(python3 trader-broker/schwab.py cancel:*)"]}`.
+   Never put them in `allow`. The read-only tools can be allowed.
+7. Check it: `schwab_get_account` (or `schwab.py status`) and confirm the
+   account's last 4 digits with the user.
+
+`schwab_place_order` (and `schwab.py place`) refuses unless trader-risk passed
+that exact order today and `ticket.py approve` recorded the user's yes for it,
+and it records placed or failed in `trader/state/broker.json` itself. A bracket
+goes to Schwab as a TRIGGER: the entry, then an OCO pair (take-profit LIMIT and
+stop-loss STOP) that Schwab sends once the entry fills. Whole shares only; no
+dollar-amount, trailing or extended-hours orders.
 
 ## Setup A: Alpaca (official MCP server, Claude Desktop)
 
@@ -137,6 +191,11 @@ that draft orders to Needs approval too.
 
 ## Steps: the entry
 
+With Schwab, steps 4 and 5 are one call: `schwab_place_order` with
+`{"index": N}` (or `schwab.py place --index N`) sends the order and records
+the result. Then `schwab_get_order` / `schwab.py order ID` shows the fill and
+prints the `ticket.py fill` line to record it. Every other step is the same.
+
 1. `ticket.py show`. Only READY tickets go to the user. A ticket that is NOT
    READY or BLOCKED goes back to `/trader-risk`.
 2. Show ONE ticket and ask: "Place this order? Reply yes or no." One order
@@ -197,13 +256,17 @@ buttons: Allow once, Deny. Allow once sends it to the paper account. The
 - Never places orders from a scheduled or background task: nobody is there to say yes.
 - Never asks for, reads, stores or repeats API keys or passwords.
 - Never switches `ALPACA_PAPER_TRADE` or `"paper"` to live. The user does that themselves.
+  (Schwab is always live; this fork's config already says so, by the user's choice.)
+- Never runs `schwab.py auth` for the user or reads `~/.schwab-trader/` into the chat.
 - Never calls `close_all_positions`, `cancel_all_orders`, option or crypto order tools on its own.
 - Never promises a fill price: a market order and a stop fill at whatever the market gives.
 
 ## Safety
 
 - Education and tooling, not financial advice. A PASS is a rules check, not a recommendation.
-- Paper trading by default (`"paper": true`). Going live is the user's own decision, in their own config.
+- This fork trades LIVE on Charles Schwab (`"broker": "schwab"`, `"paper": false`), the user's own
+  decision. Schwab has no paper account, so every ticket is real money; Alpaca paper remains available
+  by setting `"broker": "alpaca"`, `"paper": true`.
 - Nothing in this pack places an order except trader-broker, and only when all three hold: trader-risk
   passed that exact order today, the user typed an explicit yes for that one order in the chat, and the
   user clicked Allow once on Claude's own card because the order tool is set to "Needs approval"
