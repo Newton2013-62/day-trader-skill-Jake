@@ -410,7 +410,10 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
         "stop_label": plan.get("stop_label", ""), "target_label": plan.get("target_label", ""),
         "budget": budget, "cash_buffer_pct": buf_pct, "cash_buffer": cash_buffer, "cash_available": available,
         "max_loss_per_trade_usd": max_loss, "limits": limits, "qty": qty, "bound_by": bound[0],
-        "cost": cost, "max_loss": loss, "flat_by": plan.get("flat_by") or c.get("flat_by"),
+        "cost": cost, "max_loss": loss,
+        "flat_by": None if plan.get("style") == "swing" else (plan.get("flat_by") or c.get("flat_by")),
+        "style": "swing" if plan.get("style") == "swing" else "day",
+        "hold_days": plan.get("hold_days"), "exit_by": plan.get("exit_by"),
         "order_type": "limit" if limit is not None else "market", "refusal": refusal,
     }
 
@@ -419,11 +422,15 @@ def bracket_order(s):
     """The one proposed order, Alpaca place_stock_order fields (strings) plus why and plan."""
     if s["refusal"] or s["qty"] <= 0:
         return None
+    swing = s.get("style") == "swing"
+    # a swing hold keeps its stop and target at the broker overnight: good until canceled
     o = {"symbol": s["symbol"], "side": "buy", "qty": str(int(s["qty"])), "type": s["order_type"],
-         "time_in_force": "day"}
+         "time_in_force": "gtc" if swing else "day"}
     if s["order_type"] == "limit":
         o["limit_price"] = _price(s["entry"])
     setup = SETUP_WORDS.get(s["setup"], s["setup"] or "day trade")
+    if swing:
+        setup = "swing trade (up to %s trading days, out by %s)" % (s.get("hold_days"), s.get("exit_by"))
     why = ("%s on %s: %d shares, bound by your %s (%d x %s = %s at the stop)"
            % (setup, s["symbol"], s["qty"], {"max loss": "%s max loss per trade" % money(s["max_loss_per_trade_usd"] or 0),
                                              "position cap": "position cap", "max order": "max order",
@@ -438,6 +445,8 @@ def bracket_order(s):
                  "risk_per_share": s["risk_per_share"], "max_loss": s["max_loss"], "setup": s["setup"],
                  "entry_time": s["entry_time"], "flat_by": s["flat_by"]},
     })
+    if swing:
+        o["plan"].update({"style": "swing", "hold_days": s.get("hold_days"), "exit_by": s.get("exit_by")})
     return o
 
 
@@ -473,9 +482,13 @@ def plan_report(s, order, notes=()):
     lines.append("")
     lines.append("Proposed bracket order (place_stock_order arguments, nothing has been placed):")
     how = "limit %s" % order["limit_price"] if order["type"] == "limit" else "market"
-    lines.append("  buy %s %s, %s, day, take-profit %s, stop-loss %s"
-                 % (order["qty"], order["symbol"], how, order["take_profit_limit_price"],
-                    order["stop_loss_stop_price"]))
+    lines.append("  buy %s %s, %s, %s, take-profit %s, stop-loss %s"
+                 % (order["qty"], order["symbol"], how,
+                    "good until canceled" if order["time_in_force"] == "gtc" else "day",
+                    order["take_profit_limit_price"], order["stop_loss_stop_price"]))
+    if s.get("style") == "swing":
+        lines.append("Swing: the stop and target stay at the broker overnight. If neither hits, sell by the "
+                     "close on %s (trader-alerts rings)." % s.get("exit_by"))
     if s["flat_by"]:
         lines.append("Flat by %s New York: anything still open then gets closed (trader-alerts rings, "
                      "trader-broker flatten)." % s["flat_by"])

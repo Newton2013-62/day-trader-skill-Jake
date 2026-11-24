@@ -23,6 +23,8 @@ CONTRACT_CFG = {
     "max_loss_per_trade_usd": 50, "max_daily_loss_usd": 150, "max_trades_per_day": 3, "max_orders_per_day": 10,
     "min_reward_risk": 1.0, "require_stop": True,
     "no_entries_before": "09:45", "no_entries_after": "15:30", "flat_by": "15:55",
+    "swing_hold_days": 15, "swing_atr_mult": 2, "swing_target_r": 2, "max_open_positions": 3,
+    "max_open_risk_usd": 150,
     "fractional": False, "broker": "schwab", "paper": False, "schwab_account": "", "blocked": [],
     "allow_options": False, "allow_margin": False, "allow_short": False, "pdt_guard": False,
     "sec_user_agent": "Your Name you@example.com",

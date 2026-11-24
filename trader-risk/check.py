@@ -51,6 +51,10 @@ What blocks an entry (on top):
                 time), or the market is closed (weekend, NYSE holiday, outside
                 9:30 to the close; on a 1:00 p.m. early close the window ends
                 3 hours earlier too)
+  swing         only for a swing plan ("style": "swing", from trader-swing): the
+                bracket must be gtc so its stop survives overnight; at most
+                max_open_positions stocks held at once; the max losses of open
+                swing trades plus this one within max_open_risk_usd
   pdt           only with "pdt_guard": true: 3 day trades already in the last
                 5 business days (a 4th would trip the old pattern-day-trader rule)
 
@@ -347,6 +351,21 @@ def placed_today(state, today):
     return out
 
 
+def open_swing_risk(state, shares):
+    """(dollars, symbols): the max losses at the stops of swing entries placed on any day whose
+    stock is still held (shares > 0). A position that was sold no longer counts."""
+    total, syms = 0.0, []
+    latest = {}
+    for rec in (state or {}).get("orders", []):
+        if rec.get("status") == "placed" and rec_is_entry(rec) and rec.get("style") == "swing":
+            latest[str(rec.get("symbol", "")).upper()] = rec
+    for sym, rec in sorted(latest.items()):
+        if (shares or {}).get(sym, 0) > 1e-9 and _f(rec.get("max_loss")) is not None:
+            total += _f(rec["max_loss"])
+            syms.append(sym)
+    return round(total, 2), syms
+
+
 def day_trades(state, today):
     """Day trades in the last 5 business days: a (day, symbol) with both a buy
     and a sell placed or filled that day. An entry placed today counts too: it
@@ -400,6 +419,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
     seen = set()
     results = []
     batch_entries, batch_loss = 0, 0.0
+    batch_swing_risk = 0.0
     if not c.get("paper", True):
         top_warn.append("LIVE account (\"paper\": false): these orders use real money")
     top_warn.extend(win_warns)
@@ -624,6 +644,31 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                 later.append("trades: %d entries placed today plus %d passed earlier in this batch, your limit "
                              "is %d a day" % (len(entries_today), batch_entries, cap_t))
             later.extend(win_reasons)
+            if plan.get("style") == "swing":
+                # a swing hold sits overnight: its stop must still be at the broker tomorrow
+                if bracket and tif != "gtc":
+                    later.append("swing: a %s bracket's stop and target expire at today's close, leaving the "
+                                 "position unprotected overnight; a swing trade needs time_in_force gtc" % tif)
+                if not bracket and not plan.get("stop"):
+                    later.append("swing: no stop order at the broker for an overnight hold")
+                held_now = {k: v for k, v in acct["shares"].items() if v > 1e-9}
+                cap_pos = int(c.get("max_open_positions") or 0)
+                if cap_pos and sym not in held_now and len(held_now) >= cap_pos:
+                    later.append("open positions: you hold %d (%s), your limit is %d at a time"
+                                 % (len(held_now), ", ".join(sorted(held_now)) or "none", cap_pos))
+                cap_open = _f(c.get("max_open_risk_usd"))
+                if cap_open and max_loss is not None:
+                    open_r, open_syms = open_swing_risk(state, acct["shares"])
+                    used = open_r + batch_swing_risk
+                    if used + max_loss > cap_open + CENT:
+                        later.append("open risk: %s at risk in open swing trades (%s) plus %s for this one = %s, "
+                                     "over your %s max open risk"
+                                     % (money(used), ", ".join(open_syms) or "this batch", money(max_loss),
+                                        money(used + max_loss), money(cap_open)))
+                    info.append("open swing risk before this: %s of %s" % (money(used), money(cap_open)))
+                ex = plan.get("exit_by")
+                if ex:
+                    info.append("swing hold: out by the close on %s at the latest" % ex)
             if c.get("pdt_guard") and pdt_n >= 3:
                 later.append("pdt: %d day trades in the last 5 business days (%s); a 4th trips the "
                              "pattern-day-trader rule your broker applies (\"pdt_guard\": true)"
@@ -665,6 +710,8 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             if kind == "entry" and side in ("buy", "sell"):
                 batch_entries += 1
                 batch_loss += max_loss or 0.0
+                if plan.get("style") == "swing":
+                    batch_swing_risk += max_loss or 0.0
             if side == "buy":
                 if value is not None:
                     acct["cash"] -= value
@@ -688,6 +735,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             "entry_ref": round(ref, 2) if ref else None, "entry_ref_from": ref_from,
             "stop": stop, "target": target, "risk_per_share": risk_ps, "max_loss": max_loss,
             "reward_risk": rr, "fingerprint": fingerprint(o), "verdict": verdict,
+            "style": "swing" if plan.get("style") == "swing" else "day",
             "reasons": reasons, "warnings": warns, "info": info,
         })
 
