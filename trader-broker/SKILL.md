@@ -1,21 +1,20 @@
 ---
 name: trader-broker
 description: >-
-  Order Executor. Sends approved orders to your broker, never without your
-  yes. This fork is set up for Charles Schwab's Trader API (LIVE, real money:
-  Schwab has no paper trading) through a local schwab-trader connector, with
-  Alpaca (paper) and Interactive Brokers still supported. Shows each order as a plain ticket (a
-  bracket shows its stop-loss, take-profit and the max loss at the stop)
-  plus the exact JSON for Alpaca's place_stock_order, records your yes word
-  for word, then Claude's own Allow once / Deny card asks again. Builds the
-  sell ticket that closes a day trade by your flat-by time, records fills,
-  and logs each trade's max loss so trader-risk can hold the daily limit.
-  Covers signing in to Schwab and adding the schwab-trader connector, Alpaca's
-  official MCP server (paper), the Interactive Brokers connector, and setting
-  order tools to "Needs approval". Keys stay in env vars or local files, never
-  in chat. Use when the user says "place the order", "buy it", "execute",
-  "send it to my broker", "close my position", "flatten", "get me out",
-  "connect Schwab", "connect Alpaca", or after /trader-risk passes.
+  Order Executor for Charles Schwab. Sends approved orders to your Schwab
+  account through the Schwab Trader API, never without your yes. LIVE, real
+  money: Schwab has no paper trading. Shows each order as a plain ticket (a
+  bracket shows its stop-loss, take-profit and the max loss at the stop) plus
+  the exact Schwab order JSON, records your yes word for word, then Claude's
+  own Allow once / Deny card asks again before schwab_place_order runs.
+  Builds the sell ticket that closes a day trade by your flat-by time, records
+  fills, and logs each trade's max loss so trader-risk can hold the daily
+  limit. Covers signing in to Schwab, adding the local schwab-trader
+  connector, and setting order tools to "Needs approval". Keys stay in local
+  files, never in chat. Use when the user says "place the order", "buy it",
+  "execute", "send it to Schwab", "send it to my broker", "close my
+  position", "flatten", "get me out", "connect Schwab", or after /trader-risk
+  passes.
 argument-hint: "[order number]"
 ---
 
