@@ -128,10 +128,12 @@ class Repo(unittest.TestCase):
         self.assertIs(cfg.get("allow_short", False), False)
         self.assertIs(cfg.get("allow_margin", False), False)
 
-    def test_paper_trading_is_the_default(self):
+    def test_schwab_live_is_the_default(self):
+        # this fork trades live on Charles Schwab (Schwab's API has no paper account)
         with open(os.path.join(ROOT, "trader-budget", "config.example.json")) as fh:
             cfg = json.load(fh)
-        self.assertIs(cfg["paper"], True)
+        self.assertEqual(cfg["broker"], "schwab")
+        self.assertIs(cfg["paper"], False)
         self.assertIs(cfg.get("allow_options", False), False)
 
 

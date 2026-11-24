@@ -73,6 +73,26 @@ or in the `SEC_USER_AGENT` environment variable.
 | `/trader-analyst` | Earnings Analyst | Reads earnings reports and sums up what changed. |
 | `/trader-pelosi` | Pelosi Tracker | Reads Congress's stock-trade disclosures the minute they are filed. |
 
+## This fork: Charles Schwab, live
+
+This fork sends orders to **Charles Schwab's Trader API** instead of Alpaca,
+and the example config trades **live** (`"broker": "schwab"`, `"paper": false`).
+Schwab has no paper account, so every order is real money. The three gates
+still hold for every order: trader-risk passes that exact order, you type yes
+for it, and you click Allow once on Claude's card.
+
+1. Put your Schwab app key and secret in `~/.schwab-trader/app.json`
+   (`{"app_key": "...", "app_secret": "...", "callback_url": "https://127.0.0.1"}`)
+   or in `SCHWAB_APP_KEY` / `SCHWAB_APP_SECRET`. Never in the chat.
+2. Sign in, in your own terminal: `python3 trader-broker/schwab.py auth`
+   (again every 7 days, Schwab's rule).
+3. Add the connector: `claude mcp add schwab -- python3 /path/to/trader-broker/schwab_mcp.py`
+   and keep `schwab_place_order` on ask (Needs approval).
+4. Copy `trader-budget/config.example.json` to `trader/config.json`.
+
+Details in `trader-broker/SKILL.md`, Setup S. To go back to Alpaca paper, set
+`"broker": "alpaca"` and `"paper": true`.
+
 ## How to use it
 
 Everything lands in a `trader/` folder in your project, and each skill reads

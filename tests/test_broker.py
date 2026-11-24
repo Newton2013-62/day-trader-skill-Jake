@@ -104,12 +104,18 @@ class DesktopConfig(unittest.TestCase):
 
 
 class Flow(unittest.TestCase):
+    BROKER = {"broker": "alpaca", "paper": True}   # the Alpaca flow; tests/test_schwab.py covers Schwab
+
     def setUp(self):
         self.d = tempfile.mkdtemp()
         self.orders = os.path.join(self.d, "orders.json")
         shutil.copy(ORDERS_PATH, self.orders)
         self.cfg = os.path.join(self.d, "config.json")
-        shutil.copy(CFG_PATH, self.cfg)
+        with open(CFG_PATH) as fh:
+            cfg = json.load(fh)
+        cfg.update(self.BROKER)
+        with open(self.cfg, "w") as fh:
+            json.dump(cfg, fh)
         self.risk = os.path.join(self.d, "state", "risk.json")
         self.state = os.path.join(self.d, "state", "broker.json")
         self.pf = os.path.join(self.d, "portfolio.json")
