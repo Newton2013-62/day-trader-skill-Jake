@@ -543,6 +543,7 @@ def cmd_approve(a):
            "symbol": str(order.get("symbol", "")).upper(), "side": order.get("side"),
            "qty": order.get("qty"), "kind": kind_of(order, rv), "max_loss": loss, "stop": stop,
            "plain": plain(order), "status": "approved", "reply": a.reply,
+           "style": "swing" if (order.get("plan") or {}).get("style") == "swing" else "day",
            "paper": bool(cfg.get("paper", True)), "broker": cfg.get("broker", "alpaca")}
     state.setdefault("orders", []).append(rec)
     write_json(a.state, state)
@@ -582,7 +583,7 @@ def cmd_result(a):
         raise TicketError("order %d has no yes recorded today; a result can only follow an approval" % a.index)
     new = {"at": ny_iso(now), "date": today, "index": a.index, "fingerprint": fp, "symbol": rec["symbol"],
            "side": rec["side"], "plain": rec["plain"], "status": a.status}
-    for k in ("qty", "kind", "max_loss", "stop"):
+    for k in ("qty", "kind", "max_loss", "stop", "style"):
         if rec.get(k) is not None:
             new[k] = rec[k]
     if a.broker_id:

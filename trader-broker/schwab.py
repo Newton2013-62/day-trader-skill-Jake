@@ -123,7 +123,8 @@ def to_schwab(order):
     typ = str(order.get("type", "market")).lower()
     leg = _leg(SIDE[side], qty, symbol)
     if typ == "market":
-        parent = _single("MARKET", duration, leg)
+        # Schwab takes market orders for the day only; a gtc bracket keeps its legs gtc (below)
+        parent = _single("MARKET", "DAY", leg)
     elif typ == "limit":
         parent = _single("LIMIT", duration, leg, price=order.get("limit_price"))
     elif typ == "stop":
@@ -428,7 +429,7 @@ def record(state_path, rec, index, today, now, status, broker_id=None, note=None
     new = {"at": ticket.ny_iso(now), "date": today, "index": index, "fingerprint": rec["fingerprint"],
            "symbol": rec["symbol"], "side": rec["side"], "plain": rec["plain"], "status": status,
            "broker": "schwab"}
-    for k in ("qty", "kind", "max_loss", "stop"):
+    for k in ("qty", "kind", "max_loss", "stop", "style"):
         if rec.get(k) is not None:
             new[k] = rec[k]
     if broker_id:

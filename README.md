@@ -1,6 +1,6 @@
 # The Day Trader skill
 
-11 Claude skills for day trading: scan thousands of charts, track breaking news, time every entry and exit, and replay every outcome before you risk a dollar.
+12 Claude skills for day and swing trading: scan thousands of charts, track breaking news, time every entry and exit, and replay every outcome before you risk a dollar.
 
 Free, MIT, no signup, no API key. The tools are plain Python that read free
 public data: Yahoo Finance charts, Nasdaq Trader's symbol lists, SEC EDGAR
@@ -57,7 +57,7 @@ The tools need Python 3.8 or newer. Nothing to pip install. The SEC tools
 email in `trader/config.json` (`"sec_user_agent": "Your Name you@example.com"`)
 or in the `SEC_USER_AGENT` environment variable.
 
-## The eleven
+## The twelve
 
 | command | job | what it does |
 | --- | --- | --- |
@@ -68,10 +68,20 @@ or in the `SEC_USER_AGENT` environment variable.
 | `/trader-timemachine` | Time Machine | Replays every possible outcome of a trade before you risk a dollar: 10,000 simulated sessions plus every past time the setup fired. |
 | `/trader-risk` | Risk Manager | Checks every trade against your limits and stops anything over them. |
 | `/trader-budget` | Budget Manager | Sizes every position to your budget and your max loss per trade. |
-| `/trader-broker` | Order Executor | Sends approved orders to your broker, paper trading by default, never without your yes. |
+| `/trader-broker` | Order Executor | Sends approved orders to Charles Schwab (this fork, live), never without your yes. |
 | `/trader-alerts` | Price Alerts | Rings when a price, a stop or the opening bell hits. |
 | `/trader-analyst` | Earnings Analyst | Reads earnings reports and sums up what changed. |
 | `/trader-pelosi` | Pelosi Tracker | Reads Congress's stock-trade disclosures the minute they are filed. |
+| `/trader-swing` | Swing Trader | Plans trades held 5 days to 3 weeks: ATR stops on daily bars, a time limit, an earnings check, a good-till-canceled bracket and a multi-day Time Machine. |
+
+## This fork: swing trades too
+
+`/trader-swing` plans trades you hold for days to weeks instead of minutes:
+`python3 trader-swing/swing.py plan NVDA --write`, then `swing.py replay`, then
+the usual budget, risk and broker steps. The plan carries `"style": "swing"`,
+so trader-budget writes a **good-till-canceled** bracket (the stop stays at
+the broker overnight) and trader-risk checks `max_open_positions` and
+`max_open_risk_usd` instead of forcing you out by the close.
 
 ## This fork: Charles Schwab, live
 
@@ -230,6 +240,7 @@ trader-broker/      SKILL.md, ticket.py, claude_desktop_config.example.json
 trader-alerts/      SKILL.md, alerts.py, alerts.example.json
 trader-analyst/     SKILL.md, facts.py, metrics.example.json
 trader-pelosi/      SKILL.md, ptr.py
+trader-swing/       SKILL.md, swing.py
 tests/              unittest suite + offline fixtures
 ```
 

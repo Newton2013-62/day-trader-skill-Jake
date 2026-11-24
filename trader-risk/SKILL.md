@@ -102,6 +102,17 @@ Warnings do not block, but say them to the user: a LIVE account, a number
 sent as a number instead of a string, a stop that lives only in the plan and
 not at the broker, a price too old to use, an early close today.
 
+## Swing trades
+
+An order whose plan says `"style": "swing"` (from `/trader-swing`) gets three
+more checks and keeps all the others:
+
+- **gtc**: a bracket that is not good until canceled is blocked, because its
+  stop would expire at the close and leave the position unprotected overnight.
+- **open positions**: no new stock past `max_open_positions` held at once.
+- **open risk**: the max losses at the stops of every swing trade you still
+  hold, plus this one, must fit `max_open_risk_usd`.
+
 ## Steps
 
 1. If the price may have moved since the plan, refresh it first

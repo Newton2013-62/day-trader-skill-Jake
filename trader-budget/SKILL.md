@@ -126,6 +126,14 @@ more than the $50 max loss: no order. At 10:52 the real quote was 366.48, so
 the same plan sizes to 6 shares at 8.16 a share, and reward:risk falls to
 0.44: refused, because the move it was waiting for has mostly happened.
 
+## Swing plans
+
+A plan from `/trader-swing` carries `"style": "swing"`. The sizing is the same
+(the max loss per trade still decides it, and a swing stop is wider, so you get
+fewer shares), but the bracket is written **good until canceled** (`"gtc"`) so
+the stop-loss and take-profit stay at the broker overnight, and there is no
+flat-by time: the plan's `exit_by` date is the time limit instead.
+
 ## Weights mode (kept from v1)
 
 `--weights AAPL=22.04,KO=10.86` or `--targets FILE` (`targets.example.json`

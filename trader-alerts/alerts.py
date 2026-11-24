@@ -498,7 +498,8 @@ def _n(x):
 
 
 def rules_from_plan(plan, cfg_flat_by=None):
-    """trader/plan.json -> a stop alert, a target alert and a flat-by-close time alert, for the plan's day."""
+    """trader/plan.json -> a stop alert, a target alert and a flat-by-close time alert, for the plan's day.
+    A swing plan ("style": "swing"): stop and target alerts every day, and a time alert on exit_by."""
     if not isinstance(plan, dict) or not plan.get("symbol"):
         raise AlertError("the plan has no symbol (run trader-exit first)")
     sym = str(plan["symbol"]).upper()
@@ -510,6 +511,13 @@ def rules_from_plan(plan, cfg_flat_by=None):
         label = plan.get("%s_label" % key)
         out.append({"id": "%s-plan-%s" % (sym.lower(), key), "symbol": sym, "type": typ, "price": float(v),
                     "note": word + (": " + label if label else "")})
+    if plan.get("style") == "swing":
+        # a swing hold: stop and target are watched every day; the time limit rings on its last day
+        if plan.get("exit_by"):
+            out.append({"id": "%s-swing-exit-by" % sym.lower(), "symbol": sym, "type": "time", "at": "15:45",
+                        "label": "swing time limit: sell %s today if it is still open" % sym,
+                        "before_close": True, "date": str(plan["exit_by"])})
+        return out
     flat = plan.get("flat_by") or cfg_flat_by or "15:55"
     if _hhmm(flat) is None:
         raise AlertError("the plan's flat_by %r is not a time like 15:55" % flat)
