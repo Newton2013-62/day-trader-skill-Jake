@@ -6,7 +6,7 @@ description: >-
   the whole shares that fit inside four limits (max loss per trade, position
   cap, max order, cash after your buffer), says which limit decided it, and
   writes ONE bracket order (entry, stop-loss, take-profit) to
-  trader/orders.json in the exact shape of Alpaca's place_stock_order. A stop
+  trader/orders.json, ready for trader-broker to send to Schwab. A stop
   too far away for your max loss is a plain refusal, not a smaller order.
   Nothing is placed. Use when the user says "how many shares", "size this
   trade", "how much should I buy", "I have $5,000", "I only want to risk $50
