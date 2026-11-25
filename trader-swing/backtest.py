@@ -62,7 +62,11 @@ scan = _load(os.path.join(os.path.dirname(HERE), "trader-scanner", "scan.py"), "
 DEFAULTS = {"budget": 3000, "cash_buffer_pct": 10, "max_position_pct": 35, "max_order_usd": 1000,
             "max_loss_per_trade_usd": 50, "max_open_positions": 4, "max_open_risk_usd": 200,
             "swing_hold_days": 15, "swing_atr_mult": 2.0, "swing_target_r": 2.0}
-ALL_SETUPS = [k for k, _ in scan.SETUPS]
+SCANNER_SETUPS = [k for k, _ in scan.SETUPS]
+EXTRA_SETUPS = ["capitulation", "breakout_6m"]   # Lance Breitstein's two swing setups (see lance_setups)
+ALL_SETUPS = SCANNER_SETUPS + EXTRA_SETUPS
+EXTRA_LABEL = {"capitulation": "capitulation reversal (volume flush, then the turn)",
+               "breakout_6m": "multi-month breakout on volume"}
 VARIANTS = [("all", "every signal"), ("regime", "risk-on market only"),
             ("rs", "beating SPY only"), ("both", "risk-on AND beating SPY")]
 WARMUP = 220      # bars before the first signal: 200-day average + slope + ATR
@@ -97,6 +101,26 @@ def walk(entry, stop, target, days):
         if h >= target:
             return "target", target, n
     return "time", days[-1][3], len(days)
+
+
+def walk_ma(entry, stop, target, bars, start, hold, n, closes):
+    """Like walk, but also sells at the close on the first day the close is above its n-day
+    average (the classic exit for a pullback trade). -> (outcome, exit price, days held)."""
+    last = min(len(bars), start + hold)
+    for k in range(start, last):
+        o, h, l, c = bars[k]["open"], bars[k]["high"], bars[k]["low"], bars[k]["close"]
+        first = k == start
+        if not first and o <= stop:
+            return "stop", o, k - start + 1
+        if not first and o >= target:
+            return "target", o, k - start + 1
+        if l <= stop:
+            return "stop", stop, k - start + 1
+        if h >= target:
+            return "target", target, k - start + 1
+        if k + 1 >= n and c > sum(closes[k - n + 1:k + 1]) / n:
+            return "bounce", c, k - start + 1
+    return "time", bars[last - 1]["close"], last - start
 
 
 def rsi_series(closes, n=14):
@@ -142,6 +166,72 @@ def setups_at(c, i, rsi):
     return tags
 
 
+def lance_setups(bars, closes, i, a, wanted):
+    """Lance Breitstein's two daily swing setups on bar i. Pure.
+    -> [(tag, structural stop price)].
+
+    capitulation: in the last 10 days there was a flush day k: the close is at least
+      max(15%, 4 ATR) under the 20-day high, it fell three days in a row with day k's
+      drop the biggest, on at least 2.5x the 50-day average volume. Today (i > k) the
+      stock turns: it closes above the prior day's high ("the right side of the V").
+      Stop: a cent under the lowest low since the flush.
+    breakout_6m: today closes above every close of the last 126 days (about 6 months),
+      after at least 60 days with a range under 35% (a base), on at least 1.5x the
+      50-day average volume. Stop: a cent under today's low."""
+    out = []
+    if i < 130:
+        return out
+    vol50 = sum(b["volume"] for b in bars[i - 50:i]) / 50.0
+    if "capitulation" in wanted and vol50 > 0 and closes[i] > bars[i - 1]["high"]:
+        for k in range(i - 1, max(i - 11, 25), -1):
+            hi20 = max(b["high"] for b in bars[k - 20:k + 1])
+            ck = closes[k]
+            need = max(0.15, 4 * a / ck)
+            d0 = closes[k] - closes[k - 1]
+            d1 = closes[k - 1] - closes[k - 2]
+            d2 = closes[k - 2] - closes[k - 3]
+            if (ck <= hi20 * (1 - need) and d0 < 0 and d1 < 0 and d2 < 0 and d0 <= d1 and d0 <= d2
+                    and bars[k]["volume"] >= 2.5 * vol50):
+                low = min(b["low"] for b in bars[k:i + 1])
+                out.append(("capitulation", low - 0.01))
+                break
+    if "breakout_6m" in wanted and vol50 > 0:
+        prior = closes[i - 126:i]
+        base = closes[i - 60:i]
+        if (closes[i] > max(prior) and (max(base) - min(base)) / max(base) < 0.35
+                and bars[i]["volume"] >= 1.5 * vol50):
+            out.append(("breakout_6m", bars[i]["low"] - 0.01))
+    return out
+
+
+def walk_trail(entry, stop, target, bars, start, hold, mode, closes, risk):
+    """Exit with a trailing stop. Pure. -> (outcome, exit price, days held).
+    mode "low": once a close is at least 1R above the entry, the stop rises to each
+      prior day's low (never down). mode "ma20": sell at the close once it closes under
+      its 20-day average. target None = no target, let it run up to `hold` days."""
+    last = min(len(bars), start + hold)
+    trailing = False
+    for k in range(start, last):
+        o, h, l, c = bars[k]["open"], bars[k]["high"], bars[k]["low"], bars[k]["close"]
+        first = k == start
+        if not first and o <= stop:
+            return ("trail" if trailing else "stop"), o, k - start + 1
+        if target and not first and o >= target:
+            return "target", o, k - start + 1
+        if l <= stop:
+            return ("trail" if trailing else "stop"), stop, k - start + 1
+        if target and h >= target:
+            return "target", target, k - start + 1
+        if mode == "ma20" and k >= 19 and c < sum(closes[k - 19:k + 1]) / 20.0:
+            return "ma20", c, k - start + 1
+        if mode == "low":
+            if c >= entry + risk:
+                trailing = True
+            if trailing and l > stop:
+                stop = l
+    return "time", bars[last - 1]["close"], last - start
+
+
 def signals_for(sym, bars, spy_close_by_date, regime_by_date, rules):
     """Every trade the rules would have taken in one stock, one at a time (no
     new entry while the last one is open). Pure apart from the inputs."""
@@ -169,7 +259,17 @@ def signals_for(sym, bars, spy_close_by_date, regime_by_date, rules):
         if not a or a / c * 100 > rules["max_atr_pct"]:
             i += 1
             continue
+        ma_n = rules.get("above_ma") or 0
+        if ma_n and (i + 1 < ma_n or c <= sum(closes[i - ma_n + 1:i + 1]) / ma_n):
+            i += 1
+            continue
         tags = [t for t in setups_at(closes, i, rsi) if t in rules["setups"]]
+        struct = None
+        extra = [x for x in rules["setups"] if x in EXTRA_SETUPS]
+        if extra:
+            for tag, st in lance_setups(bars, closes, i, a, extra):
+                tags.append(tag)
+                struct = st if struct is None else min(struct, st)
         if not tags:
             i += 1
             continue
@@ -182,20 +282,34 @@ def signals_for(sym, bars, spy_close_by_date, regime_by_date, rules):
             rs, _ = edge.rs_score([o for _, o in pairs], [s for s, _ in pairs])
         e = bars[i + 1]
         entry = e["open"] * (1 + rules["slippage"])
-        risk = rules["atr_mult"] * a
-        stop = entry - risk
-        target = entry + rules["target_r"] * risk
+        if rules.get("stop_mode") == "structure" and struct is not None and struct < entry:
+            stop = struct
+            risk = entry - stop
+            if risk < 0.5 * a:          # a stop tighter than half a day's range is noise: widen it
+                risk = 0.5 * a
+                stop = entry - risk
+        else:
+            risk = rules["atr_mult"] * a
+            stop = entry - risk
+        target = entry + rules["target_r"] * risk if rules["target_r"] > 0 else None
         days = [(x["open"], x["high"], x["low"], x["close"]) for x in bars[i + 1:i + 1 + hold]]
         if not days or stop <= 0:
             i += 1
             continue
-        outcome, fill, held = walk(entry, stop, target, days)
+        if rules.get("trail") in ("low", "ma20"):
+            outcome, fill, held = walk_trail(entry, stop, target, bars, i + 1, hold, rules["trail"], closes, risk)
+        elif target is None:
+            outcome, fill, held = walk(entry, stop, float("inf"), days)
+        elif rules.get("exit_ma"):
+            outcome, fill, held = walk_ma(entry, stop, target, bars, i + 1, hold, rules["exit_ma"], closes)
+        else:
+            outcome, fill, held = walk(entry, stop, target, days)
         exit_px = fill * (1 - rules["slippage"])
         r = (exit_px - entry) / risk
         exit_i = i + held          # the entry is bar i+1, so held days end at bar i+held
         out.append({"symbol": sym, "signal_date": b["date"], "entry_date": e["date"],
                     "exit_date": bars[exit_i]["date"], "setups": tags, "entry": entry, "stop": stop,
-                    "target": target, "exit": exit_px, "outcome": outcome, "days": held,
+                    "target": target if target is not None else 0.0, "exit": exit_px, "outcome": outcome, "days": held,
                     "r": r, "rs": rs, "regime": regime_by_date.get(b["date"]),
                     "complete": outcome != "time" or held == hold})
         busy_until = exit_i
@@ -348,8 +462,9 @@ def run(a):
     cfg.update(edge.read_json(a.config, required=False) or {})
     rules = {"min_price": a.min_price, "min_dollar_volume": a.min_dollar_volume, "max_atr_pct": a.max_atr_pct,
              "hold": int(a.hold or cfg["swing_hold_days"]), "atr_mult": float(a.atr_mult or cfg["swing_atr_mult"]),
-             "target_r": float(a.target_r or cfg["swing_target_r"]), "slippage": a.slippage / 100.0,
-             "setups": [s for s in (a.setups.split(",") if a.setups else ALL_SETUPS) if s]}
+             "target_r": float(a.target_r if a.target_r is not None else cfg["swing_target_r"]), "slippage": a.slippage / 100.0,
+             "setups": [s for s in (a.setups.split(",") if a.setups else SCANNER_SETUPS) if s],
+             "above_ma": a.above_ma, "exit_ma": a.exit_ma, "stop_mode": a.stop_mode, "trail": a.trail}
     bad = [s for s in rules["setups"] if s not in ALL_SETUPS]
     if bad:
         raise BacktestError("unknown setup %s; use %s" % (", ".join(bad), ", ".join(ALL_SETUPS)))
@@ -361,8 +476,11 @@ def run(a):
     regime = edge.regime_series(spy)
     syms = pick_symbols(a)
     log = (lambda m: None) if a.json else (lambda m: print(m, file=sys.stderr))
-    log("Backtesting %d stocks over %d years: entry next open, stop %gx ATR, target %gR, hold up to %d days..."
-        % (len(syms), a.years, rules["atr_mult"], rules["target_r"], rules["hold"]))
+    stop_txt = "structural stop" if rules.get("stop_mode") == "structure" else "stop %gx ATR" % rules["atr_mult"]
+    tgt_txt = "target %gR" % rules["target_r"] if rules["target_r"] > 0 else "no target"
+    trail_txt = "" if rules.get("trail") in (None, "none") else ", trail %s" % rules["trail"]
+    log("Backtesting %d stocks over %d years: entry next open, %s, %s%s, hold up to %d days..."
+        % (len(syms), a.years, stop_txt, tgt_txt, trail_txt, rules["hold"]))
     trades, closes_by_sym, failed = [], {}, {}
     t0 = time.time()
     for k, sym in enumerate(syms):
@@ -408,10 +526,21 @@ def render(res):
     L = []
     r = res["rules"]
     L.append("SWING BACKTEST %s to %s, %d stocks (%d had no data)" % (res["from"], res["to"], res["stocks"], res["no_data"]))
-    L.append("Rules: setups %s; price >= $%g, 20-day dollar volume >= $%s, ATR <= %g%%; entry next open, stop %gx ATR, "
-             "target %gR, out after %d days; %.2f%% slippage each way."
+    stop_txt = "structural stop" if r.get("stop_mode") == "structure" else "stop %gx ATR" % r["atr_mult"]
+    tgt_txt = "target %gR" % r["target_r"] if r["target_r"] > 0 else "no target"
+    L.append("Rules: setups %s; price >= $%g, 20-day dollar volume >= $%s, ATR <= %g%%; entry next open, %s, "
+             "%s, out after %d days; %.2f%% slippage each way."
              % (", ".join(r["setups"]), r["min_price"], "{:,.0f}".format(r["min_dollar_volume"]), r["max_atr_pct"],
-                r["atr_mult"], r["target_r"], r["hold"], r["slippage"] * 100))
+                stop_txt, tgt_txt, r["hold"], r["slippage"] * 100))
+    if r.get("stop_mode") == "structure" or r.get("trail") not in (None, "none"):
+        L.append("Exits: %s stop%s%s." % ("structural (the setup's own low)" if r.get("stop_mode") == "structure" else "ATR",
+                                          {"low": "; trailing to the prior day's low once 1R up",
+                                           "ma20": "; sell on a close under the 20-day average"}.get(r.get("trail"), ""),
+                                          "; no fixed target" if not r["target_r"] else ""))
+    if r.get("above_ma") or r.get("exit_ma"):
+        L.append("Extra rules:%s%s" % (" only stocks above their %d-day average;" % r["above_ma"] if r.get("above_ma") else "",
+                                       " also sell at the close once it closes above its %d-day average." % r["exit_ma"]
+                                       if r.get("exit_ma") else ""))
     rd = res["regime_days"]
     tot = sum(rd.values()) or 1
     L.append("Market regime over the period: risk-on %d%% of days, caution %d%%, risk-off %d%%."
@@ -451,7 +580,7 @@ def render(res):
         L.append("  %s  %5d trades  win %5.1f%%  avg %+.3fR  total %+7.1fR" % (y, s["trades"], s["win_pct"], s["avg_r"], s["total_r"]))
     L.append("BY SETUP (every signal)")
     for k, s in res["variants"]["all"]["by_setup"].items():
-        L.append("  %-30s %5d trades  win %5.1f%%  avg %+.3fR" % (scan.LABEL.get(k, k), s["trades"], s["win_pct"], s["avg_r"]))
+        L.append("  %-30s %5d trades  win %5.1f%%  avg %+.3fR" % (scan.LABEL.get(k, EXTRA_LABEL.get(k, k)), s["trades"], s["win_pct"], s["avg_r"]))
     L.append("")
     L.append(verdict(res))
     L.append("Caveats: today's stock list only (delisted losers are missing, which flatters the result); free "
@@ -500,6 +629,12 @@ def main(argv=None):
     ap.add_argument("--min-price", type=float, default=3.0)
     ap.add_argument("--min-dollar-volume", type=float, default=3e6)
     ap.add_argument("--max-atr-pct", type=float, default=6.0)
+    ap.add_argument("--above-ma", type=int, default=0, help="only buy stocks closing above their N-day average (e.g. 200)")
+    ap.add_argument("--stop-mode", choices=["atr", "structure"], default="atr",
+                    help="atr (default) or structure: the setup's own low (capitulation / breakout_6m)")
+    ap.add_argument("--trail", choices=["none", "low", "ma20"], default="none",
+                    help="trailing exit: low (prior day's low once 1R up) or ma20 (close under the 20-day average)")
+    ap.add_argument("--exit-ma", type=int, default=0, help="also sell at the close once it closes above its N-day average (e.g. 5)")
     ap.add_argument("--slippage", type=float, default=0.1, help="percent each way (default 0.1)")
     ap.add_argument("--config", default="trader/config.json")
     ap.add_argument("--cache", default="trader/cache/daily")

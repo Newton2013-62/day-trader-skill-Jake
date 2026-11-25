@@ -60,8 +60,13 @@ def fetch_chart(sym, rng="1y"):
     for attempt in (0, 1):
         saw_429 = False
         for host in HOSTS:
-            url = "https://%s.finance.yahoo.com/v8/finance/chart/%s?range=%s&interval=1d" % (
-                host, urllib.parse.quote(sym.upper().replace(".", "-")), rng)
+            if rng == "all":
+                # range=max quietly returns MONTHLY bars; an explicit period keeps them daily
+                q = "period1=0&period2=%d&interval=1d" % int(time.time())
+            else:
+                q = "range=%s&interval=1d" % rng
+            url = "https://%s.finance.yahoo.com/v8/finance/chart/%s?%s" % (
+                host, urllib.parse.quote(sym.upper().replace(".", "-")), q)
             try:
                 return json.loads(_get(url))
             except urllib.error.HTTPError as e:
@@ -109,7 +114,19 @@ def parse_bars(doc, min_bars=1):
             bars.append(b)
     if len(bars) < min_bars:
         raise EdgeError("only %d daily bars; need at least %d" % (len(bars), min_bars))
+    check_daily(bars)
     return bars
+
+
+def check_daily(bars):
+    """Refuse weekly or monthly bars passed off as daily (Yahoo does that for range=max)."""
+    if len(bars) < 20:
+        return
+    d = [datetime.date.fromisoformat(b["date"]) for b in bars[-61:]]
+    gaps = sorted((b - a).days for a, b in zip(d, d[1:]))
+    if gaps[len(gaps) // 2] > 4:
+        raise EdgeError("these are not daily bars (typical gap %d days): Yahoo sent weekly or monthly data"
+                        % gaps[len(gaps) // 2])
 
 
 def cached_bars(sym, rng, cache_dir=None, max_age_hours=12, min_bars=1):
