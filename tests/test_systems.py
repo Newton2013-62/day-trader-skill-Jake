@@ -84,6 +84,18 @@ class Pieces(unittest.TestCase):
         self.assertAlmostEqual(curve[-1][1], 3000 + 4 * 75 * 1.0, places=2)
 
 
+class DailyOnly(unittest.TestCase):
+    def test_monthly_bars_are_refused(self):
+        doc = chart(n=80)
+        res = doc["chart"]["result"][0]
+        res["timestamp"] = [res["timestamp"][0] + k * 30 * 86400 for k in range(80)]
+        with self.assertRaises(sysm.edge.EdgeError):
+            sysm.parse_adj(doc)
+
+    def test_daily_bars_pass(self):
+        self.assertGreater(len(sysm.parse_adj(chart(n=80))), 70)
+
+
 class EndToEnd(unittest.TestCase):
     def test_offline_run(self):
         tmp = tempfile.mkdtemp()
@@ -93,7 +105,7 @@ class EndToEnd(unittest.TestCase):
             syms = ["SPY", "BIL", "VEU", "AGG"] + sysm.SECTORS
             for k, s in enumerate(syms):
                 vol = 0.0005 if s == "BIL" else 0.012
-                with gzip.open(os.path.join(cache, "%s_max.json.gz" % s), "wt") as fh:
+                with gzip.open(os.path.join(cache, "%s_all.json.gz" % s), "wt") as fh:
                     json.dump(chart(n=2900, seed=100 + k, vol=vol, drift=0.0003), fh)
             for k, s in enumerate(["AAA", "BBB"]):
                 with gzip.open(os.path.join(cache, "%s_10y.json.gz" % s), "wt") as fh:

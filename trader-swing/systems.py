@@ -188,7 +188,8 @@ def metrics(curve, start_value=3000.0):
         first, last = years[y]
         yearly[y] = round((last / prev - 1) * 100, 1)
         prev = last
-    n_years = len(curve) / 252.0
+    n_years = max(1e-9, (datetime.date.fromisoformat(curve[-1][0]) -
+                         datetime.date.fromisoformat(curve[0][0])).days / 365.25)
     end = curve[-1][1] / v0
     return {"end": round(start_value * end, 2), "return_pct": round((end - 1) * 100, 1),
             "cagr_pct": round((end ** (1 / n_years) - 1) * 100, 1), "max_drawdown_pct": round(dd * 100, 1),
@@ -297,7 +298,7 @@ def run(a):
     data = {}
     for s in etfs:
         try:
-            data[s] = load(s, "max", a.cache, a.cache_hours, a.pause)
+            data[s] = load(s, "all", a.cache, a.cache_hours, a.pause)
         except edge.EdgeError as e:
             if s in ("SPY", "BIL"):
                 raise
