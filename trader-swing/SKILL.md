@@ -71,6 +71,49 @@ Stops: `atr` (default, `--atr-mult 2`), `low10` (a cent under the 10-day low;
    trade's flatten: cancel the bracket's open legs, then a sell ticket
    (`ticket.py flatten --symbol T --qty N`), risk check, the user's yes.
 
+## Does any of this work? Regime, relative strength, backtest, journal
+
+A plan and a replay say what one trade might do. They cannot say whether the
+whole approach makes money. Four tools in this folder answer that:
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/edge.py" regime                 # is the market in an uptrend?
+python3 "${CLAUDE_SKILL_DIR}/edge.py" rs --write             # rank the watchlist by strength vs SPY
+python3 "${CLAUDE_SKILL_DIR}/backtest.py" --sample 500       # the hunt's rules over 5 years
+python3 "${CLAUDE_SKILL_DIR}/journal.py" add                 # log trader/plan.json
+python3 "${CLAUDE_SKILL_DIR}/journal.py" update              # score open ideas from daily bars
+python3 "${CLAUDE_SKILL_DIR}/journal.py" stats
+```
+
+- **Regime** (`edge.py regime`, writes `trader/regime.json`). SPY against its
+  50- and 200-day averages: **risk-on** (above both, 50-day rising),
+  **caution** (above the 200-day only), **risk-off** (under the 200-day).
+  QQQ and IWM are shown beside it. In risk-off the default is no new swing
+  entries; say so plainly, and let the user decide.
+- **Relative strength** (`edge.py rs`). Each stock's return minus SPY's over
+  1, 3 and 6 months (weights 20/50/30), and its rank 1-99 in the list. With
+  `--write` it stores `rs` and `rs_rank` in `trader/watchlist.json`. Rank the
+  hunt's candidates by it: stocks already beating the market break out more
+  cleanly than laggards.
+- **Backtest** (`backtest.py`, writes `trader/backtest.json`). Every scanner
+  setup over the last N years (default 5) on a seeded sample of the universe
+  (`--all` for every stock), entry at the next open, the config's ATR stop,
+  R target and hold, 0.1 % slippage each way. Four variants side by side:
+  every signal, risk-on only, beating SPY only, and both. Each is also run as
+  the user's real account (budget, positions, $ risk, max order, open-risk
+  cap), marked to market daily, against just holding SPY. Report the table,
+  the by-year lines and the verdict as printed. Always say the survivorship
+  caveat: today's list has no delisted losers, so results look too good.
+- **Journal** (`journal.py`, writes `trader/journal.json`). Log EVERY idea the
+  hunt ranks, taken or not, before anyone knows how it ends. `update` scores
+  them from daily bars (entry at the next open, then stop, target or time);
+  `take` / `close` record the user's real fills, which win over the bars.
+  `stats` gives win rate, average R and profit factor, split by taken vs not,
+  setup and regime. Under 30 scored ideas, say the result is mostly luck.
+
+The order of trust: the journal (real, forward) over the backtest (real
+history, flattered by survivorship) over the replay (a resampled guess).
+
 ## The swing rules in trader-risk (trader/config.json)
 
 | key | default | what |
