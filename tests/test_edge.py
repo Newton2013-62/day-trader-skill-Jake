@@ -171,6 +171,32 @@ class Backtest(unittest.TestCase):
         spy = edge.parse_bars(chart(n=500, seed=1))
         self.assertEqual(bt.signals_for("THIN", bars, {b["date"]: b["close"] for b in spy}, {}, self.rules()), [])
 
+    def test_above_ma_filter_and_ma_exit(self):
+        bars = edge.parse_bars(chart(n=700, seed=11, vol=0.025))
+        spy = edge.parse_bars(chart(n=700, seed=1, vol=0.01))
+        sc, rg = {b["date"]: b["close"] for b in spy}, edge.regime_series(spy)
+        closes = [b["close"] for b in bars]
+        idx = {b["date"]: k for k, b in enumerate(bars)}
+        base = self.rules(setups=["oversold", "oversold_bounce"], target_r=2, hold=15)
+        filt = bt.signals_for("X", bars, sc, rg, dict(base, above_ma=200))
+        for t in filt:
+            i = idx[t["signal_date"]]
+            self.assertGreater(closes[i], sum(closes[i - 199:i + 1]) / 200)
+        ex = bt.signals_for("X", bars, sc, rg, dict(base, exit_ma=5))
+        self.assertTrue(any(t["outcome"] == "bounce" for t in ex))
+        for t in ex:
+            if t["outcome"] == "bounce":
+                j = idx[t["exit_date"]]
+                self.assertGreater(closes[j], sum(closes[j - 4:j + 1]) / 5)
+                self.assertLessEqual(t["days"], 15)
+
+    def test_walk_ma(self):
+        bars = [{"open": 10, "high": 10.2, "low": 9.8, "close": c} for c in (12, 11, 10, 9.9, 10.5)]
+        closes = [b["close"] for b in bars]
+        self.assertEqual(bt.walk_ma(10, 9, 13, bars, 3, 5, 3, closes), ("bounce", 10.5, 2))
+        self.assertEqual(bt.walk_ma(10, 9, 13, bars, 3, 1, 3, closes), ("time", 9.9, 1))
+        self.assertEqual(bt.walk_ma(10, 9, 13, bars, 4, 5, 3, closes)[:2], ("bounce", 10.5))
+
     def test_keep_variants(self):
         t = {"regime": "risk-on", "rs": 5.0}
         self.assertTrue(all(bt.keep(t, v) for v, _ in bt.VARIANTS))

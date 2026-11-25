@@ -99,6 +99,26 @@ def walk(entry, stop, target, days):
     return "time", days[-1][3], len(days)
 
 
+def walk_ma(entry, stop, target, bars, start, hold, n, closes):
+    """Like walk, but also sells at the close on the first day the close is above its n-day
+    average (the classic exit for a pullback trade). -> (outcome, exit price, days held)."""
+    last = min(len(bars), start + hold)
+    for k in range(start, last):
+        o, h, l, c = bars[k]["open"], bars[k]["high"], bars[k]["low"], bars[k]["close"]
+        first = k == start
+        if not first and o <= stop:
+            return "stop", o, k - start + 1
+        if not first and o >= target:
+            return "target", o, k - start + 1
+        if l <= stop:
+            return "stop", stop, k - start + 1
+        if h >= target:
+            return "target", target, k - start + 1
+        if k + 1 >= n and c > sum(closes[k - n + 1:k + 1]) / n:
+            return "bounce", c, k - start + 1
+    return "time", bars[last - 1]["close"], last - start
+
+
 def rsi_series(closes, n=14):
     """Wilder's RSI for every bar (None until n+1 bars). The scanner computes it on a
     shorter window; after ~100 bars the two agree to a fraction of a point."""
@@ -169,6 +189,10 @@ def signals_for(sym, bars, spy_close_by_date, regime_by_date, rules):
         if not a or a / c * 100 > rules["max_atr_pct"]:
             i += 1
             continue
+        ma_n = rules.get("above_ma") or 0
+        if ma_n and (i + 1 < ma_n or c <= sum(closes[i - ma_n + 1:i + 1]) / ma_n):
+            i += 1
+            continue
         tags = [t for t in setups_at(closes, i, rsi) if t in rules["setups"]]
         if not tags:
             i += 1
@@ -189,7 +213,10 @@ def signals_for(sym, bars, spy_close_by_date, regime_by_date, rules):
         if not days or stop <= 0:
             i += 1
             continue
-        outcome, fill, held = walk(entry, stop, target, days)
+        if rules.get("exit_ma"):
+            outcome, fill, held = walk_ma(entry, stop, target, bars, i + 1, hold, rules["exit_ma"], closes)
+        else:
+            outcome, fill, held = walk(entry, stop, target, days)
         exit_px = fill * (1 - rules["slippage"])
         r = (exit_px - entry) / risk
         exit_i = i + held          # the entry is bar i+1, so held days end at bar i+held
@@ -349,7 +376,8 @@ def run(a):
     rules = {"min_price": a.min_price, "min_dollar_volume": a.min_dollar_volume, "max_atr_pct": a.max_atr_pct,
              "hold": int(a.hold or cfg["swing_hold_days"]), "atr_mult": float(a.atr_mult or cfg["swing_atr_mult"]),
              "target_r": float(a.target_r or cfg["swing_target_r"]), "slippage": a.slippage / 100.0,
-             "setups": [s for s in (a.setups.split(",") if a.setups else ALL_SETUPS) if s]}
+             "setups": [s for s in (a.setups.split(",") if a.setups else ALL_SETUPS) if s],
+             "above_ma": a.above_ma, "exit_ma": a.exit_ma}
     bad = [s for s in rules["setups"] if s not in ALL_SETUPS]
     if bad:
         raise BacktestError("unknown setup %s; use %s" % (", ".join(bad), ", ".join(ALL_SETUPS)))
@@ -412,6 +440,10 @@ def render(res):
              "target %gR, out after %d days; %.2f%% slippage each way."
              % (", ".join(r["setups"]), r["min_price"], "{:,.0f}".format(r["min_dollar_volume"]), r["max_atr_pct"],
                 r["atr_mult"], r["target_r"], r["hold"], r["slippage"] * 100))
+    if r.get("above_ma") or r.get("exit_ma"):
+        L.append("Extra rules:%s%s" % (" only stocks above their %d-day average;" % r["above_ma"] if r.get("above_ma") else "",
+                                       " also sell at the close once it closes above its %d-day average." % r["exit_ma"]
+                                       if r.get("exit_ma") else ""))
     rd = res["regime_days"]
     tot = sum(rd.values()) or 1
     L.append("Market regime over the period: risk-on %d%% of days, caution %d%%, risk-off %d%%."
@@ -500,6 +532,8 @@ def main(argv=None):
     ap.add_argument("--min-price", type=float, default=3.0)
     ap.add_argument("--min-dollar-volume", type=float, default=3e6)
     ap.add_argument("--max-atr-pct", type=float, default=6.0)
+    ap.add_argument("--above-ma", type=int, default=0, help="only buy stocks closing above their N-day average (e.g. 200)")
+    ap.add_argument("--exit-ma", type=int, default=0, help="also sell at the close once it closes above its N-day average (e.g. 5)")
     ap.add_argument("--slippage", type=float, default=0.1, help="percent each way (default 0.1)")
     ap.add_argument("--config", default="trader/config.json")
     ap.add_argument("--cache", default="trader/cache/daily")
