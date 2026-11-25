@@ -83,6 +83,12 @@ so trader-budget writes a **good-till-canceled** bracket (the stop stays at
 the broker overnight) and trader-risk checks `max_open_positions` and
 `max_open_risk_usd` instead of forcing you out by the close.
 
+To find out whether the approach works at all, `trader-swing` also has a
+market regime check (`edge.py regime`), relative strength vs SPY
+(`edge.py rs`), a multi-year backtest of the scanner's setups run as your real
+account (`backtest.py`), and a trade journal that scores every idea, taken or
+not (`journal.py`).
+
 ## This fork: Charles Schwab, live
 
 This fork sends orders to **Charles Schwab's Trader API** instead of Alpaca,
@@ -240,7 +246,7 @@ trader-broker/      SKILL.md, ticket.py, claude_desktop_config.example.json
 trader-alerts/      SKILL.md, alerts.py, alerts.example.json
 trader-analyst/     SKILL.md, facts.py, metrics.example.json
 trader-pelosi/      SKILL.md, ptr.py
-trader-swing/       SKILL.md, swing.py
+trader-swing/       SKILL.md, swing.py, edge.py, backtest.py, journal.py
 tests/              unittest suite + offline fixtures
 ```
 
