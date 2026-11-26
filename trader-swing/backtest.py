@@ -63,10 +63,11 @@ DEFAULTS = {"budget": 3000, "cash_buffer_pct": 10, "max_position_pct": 35, "max_
             "max_loss_per_trade_usd": 50, "max_open_positions": 4, "max_open_risk_usd": 200,
             "swing_hold_days": 15, "swing_atr_mult": 2.0, "swing_target_r": 2.0}
 SCANNER_SETUPS = [k for k, _ in scan.SETUPS]
-EXTRA_SETUPS = ["capitulation", "breakout_6m"]   # Lance Breitstein's two swing setups (see lance_setups)
+EXTRA_SETUPS = ["capitulation", "breakout_6m", "sr_breakout"]   # Lance's two setups + horizontal resistance breakout
 ALL_SETUPS = SCANNER_SETUPS + EXTRA_SETUPS
 EXTRA_LABEL = {"capitulation": "capitulation reversal (volume flush, then the turn)",
-               "breakout_6m": "multi-month breakout on volume"}
+               "breakout_6m": "multi-month breakout on volume",
+               "sr_breakout": "support/resistance breakout (2+ touches, volume)"}
 VARIANTS = [("all", "every signal"), ("regime", "risk-on market only"),
             ("rs", "beating SPY only"), ("both", "risk-on AND beating SPY")]
 WARMUP = 220      # bars before the first signal: 200-day average + slope + ATR
@@ -204,6 +205,54 @@ def lance_setups(bars, closes, i, a, wanted):
     return out
 
 
+def resistance_level(bars, closes, i, lookback=120, pivot=3, tol=0.015, touches=2, gap=10):
+    """The horizontal resistance that bar i just broke, or None. Pure.
+    A swing high is a bar whose high is above the `pivot` bars before it and not
+    below the `pivot` bars after it.
+    A level is a swing high with at least `touches` swing highs (itself included,
+    each `gap` days apart) within `tol` of it in the last `lookback` days, and no
+    close above it from its first touch until yesterday. Bar i must close above the
+    level after yesterday closed at or under it. Picks the highest such level."""
+    lo = max(pivot, i - lookback)
+    piv = []
+    for j in range(lo, i - pivot):
+        h = bars[j]["high"]
+        if (all(h > bars[k]["high"] for k in range(j - pivot, j))
+                and all(h >= bars[k]["high"] for k in range(j + 1, j + pivot + 1))):
+            piv.append((j, h))
+    best = None
+    for j, lvl in piv:
+        near = [k for k, h in piv if abs(h - lvl) <= tol * lvl]
+        spaced = [near[0]] if near else []
+        for k in near[1:]:
+            if k - spaced[-1] >= gap:
+                spaced.append(k)
+        if len(spaced) < touches:
+            continue
+        top = max(h for k, h in piv if k in near)
+        if max(closes[near[0]:i]) > top:
+            continue
+        if closes[i] > top and closes[i - 1] <= top and (best is None or top > best):
+            best = top
+    return best
+
+
+def sr_setup(bars, closes, i, a, vol_mult=1.5, max_ext_atr=1.0):
+    """Support/resistance breakout on bar i. Pure. -> stop price or None.
+    Close breaks a resistance level (resistance_level) on at least `vol_mult` x the
+    50-day average volume, and not more than `max_ext_atr` ATRs past it (no chasing).
+    Stop: half an ATR under the old resistance (it should now act as support)."""
+    if i < 130 or not a:
+        return None
+    vol50 = sum(b["volume"] for b in bars[i - 50:i]) / 50.0
+    if vol50 <= 0 or bars[i]["volume"] < vol_mult * vol50:
+        return None
+    lvl = resistance_level(bars, closes, i)
+    if lvl is None or closes[i] - lvl > max_ext_atr * a:
+        return None
+    return round(lvl - 0.5 * a, 2)
+
+
 def walk_trail(entry, stop, target, bars, start, hold, mode, closes, risk):
     """Exit with a trailing stop. Pure. -> (outcome, exit price, days held).
     mode "low": once a close is at least 1R above the entry, the stop rises to each
@@ -270,6 +319,11 @@ def signals_for(sym, bars, spy_close_by_date, regime_by_date, rules):
             for tag, st in lance_setups(bars, closes, i, a, extra):
                 tags.append(tag)
                 struct = st if struct is None else min(struct, st)
+            if "sr_breakout" in extra:
+                st = sr_setup(bars, closes, i, a)
+                if st is not None:
+                    tags.append("sr_breakout")
+                    struct = st if struct is None else min(struct, st)
         if not tags:
             i += 1
             continue

@@ -225,6 +225,24 @@ class Backtest(unittest.TestCase):
         self.assertEqual(bt.lance_setups(bars, closes, 139, 2.0, ["breakout_6m"]), [])
         self.assertEqual(bt.lance_setups(bars[:100], closes[:100], 99, 2.0, ["breakout_6m"]), [])
 
+    def test_sr_breakout(self):
+        bars = self._flat()
+        # two clear swing highs at 104 (days 60 and 100), closes stay under, then a break on day 139
+        for j in (60, 100):
+            bars[j] = dict(bars[j], high=104.0)
+        bars[139] = {"date": "d139", "open": 103, "high": 105.5, "low": 102.5, "close": 105, "volume": 2e6}
+        closes = [b["close"] for b in bars]
+        self.assertEqual(bt.resistance_level(bars, closes, 139), 104.0)
+        self.assertEqual(bt.sr_setup(bars, closes, 139, 2.0), 103.0)
+        bars[139]["volume"] = 1.2e6           # weak volume: no signal
+        self.assertIsNone(bt.sr_setup(bars, closes, 139, 2.0))
+        bars[139]["volume"] = 2e6
+        closes[139] = 107.5                   # 3.5 past the level with ATR 2: too extended
+        self.assertIsNone(bt.sr_setup(bars, closes, 139, 2.0))
+        bars[100] = dict(bars[100], high=101.0)   # only one touch: no level
+        closes[139] = 105
+        self.assertIsNone(bt.resistance_level(bars, closes, 139))
+
     def test_walk_trail_low(self):
         rows = [(10, 10.5, 9.8, 10.2), (10.2, 11.5, 10.1, 11.2), (11.2, 12, 11.0, 11.8), (11.8, 11.9, 10.9, 11.0)]
         bars = [{"open": o, "high": h, "low": l, "close": c} for o, h, l, c in rows]
